@@ -652,4 +652,232 @@
                         interval: document.getElementById('intervals').value,
                     }),
                     headers: {
-                        '
+                        'Content-Type': 'application/json',
+                    },
+                });
+                const data = await response.json();
+            
+                if (data.status === 200) {
+                    result.style.backgroundColor = 'rgba(76, 201, 240, 0.2)';
+                    result.style.border = '1px solid var(--success)';
+                    result.style.color = 'var(--success)';
+                    result.innerHTML = '<i class="fas fa-check-circle"></i> Submitted successfully!';
+                    button.innerHTML = '<i class="fas fa-paper-plane"></i> LAUNCH SHARES';
+                    button.disabled = false;
+                    
+                    // Update stats
+                    updateAdminStats();
+                    // Refresh progress
+                    linkOfProcessing();
+                    
+                    // Add to recent activity
+                    addRecentActivity(`New share job started (${document.getElementById('urls').value})`, 'info');
+                } else {
+                    result.style.backgroundColor = 'rgba(247, 37, 133, 0.2)';
+                    result.style.border = '1px solid var(--warning)';
+                    result.style.color = 'var(--warning)';
+                    result.innerHTML = '<i class="fas fa-exclamation-circle"></i> Error: ' + data.error;
+                    button.innerHTML = '<i class="fas fa-paper-plane"></i> TRY AGAIN';
+                    button.disabled = false;
+                    
+                    // Add to recent activity
+                    addRecentActivity(`Failed to start job: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                console.error(e);
+                result.style.backgroundColor = 'rgba(247, 37, 133, 0.2)';
+                result.style.border = '1px solid var(--warning)';
+                result.style.color = 'var(--warning)';
+                result.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network error occurred';
+                button.innerHTML = '<i class="fas fa-paper-plane"></i> TRY AGAIN';
+                button.disabled = false;
+                
+                // Add to recent activity
+                addRecentActivity('Network error occurred', 'error');
+            }
+        }
+        
+        async function linkOfProcessing() {
+            try {
+                const container = document.getElementById('processing');
+                const processContainer = document.getElementById('process-container');
+                const initialResponse = await fetch('/total');
+            
+                if (!initialResponse.ok) {
+                    throw new Error(`Failed to fetch: ${initialResponse.status} - ${initialResponse.statusText}`);
+                }
+            
+                const initialData = await initialResponse.json();
+                container.innerHTML = '';
+                
+                if (initialData.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="fas fa-chart-line"></i>
+                            <p>No active sharing jobs</p>
+                        </div>
+                    `;
+                    document.getElementById('active-jobs').textContent = '0';
+                    return;
+                }
+                
+                document.getElementById('active-jobs').textContent = initialData.length.toString();
+                
+                initialData.forEach((link, index) => {
+                    let { url, count, id, target, session } = link;
+                    const progressPercentage = Math.min(100, (count / target) * 100);
+                    
+                    const progressCard = document.createElement('div');
+                    progressCard.classList.add('progress-card');
+                    
+                    progressCard.innerHTML = `
+                        <div class="progress-header">
+                            <span class="progress-id">JOB #${id}</span>
+                            <span>${count}/${target} shares</span>
+                        </div>
+                        <div class="progress-url">${url}</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: ${progressPercentage}%"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <span>${progressPercentage.toFixed(1)}% complete</span>
+                            <span>Session: ${session}</span>
+                        </div>
+                    `;
+                    
+                    container.appendChild(progressCard);
+                    
+                    const intervalId = setInterval(async () => {
+                        const updateResponse = await fetch('/total');
+                    
+                        if (!updateResponse.ok) {
+                            console.error(`Failed to fetch update: ${updateResponse.status} - ${updateResponse.statusText}`);
+                            return;
+                        }
+                    
+                        const updateData = await updateResponse.json();
+                        const updatedLink = updateData.find((link) => link.session === session);
+                    
+                        if (updatedLink) {
+                            let { count } = updatedLink;
+                            const newPercentage = Math.min(100, (count / target) * 100);
+                            
+                            const progressBar = progressCard.querySelector('.progress-bar');
+                            const progressText = progressCard.querySelector('.progress-header span:last-child');
+                            const progressPercent = progressCard.querySelector('.progress-stats span:first-child');
+                            
+                            if (progressBar) progressBar.style.width = `${newPercentage}%`;
+                            if (progressText) progressText.textContent = `${count}/${target} shares`;
+                            if (progressPercent) progressPercent.textContent = `${newPercentage.toFixed(1)}% complete`;
+                            
+                            // Update total shares count
+                            updateAdminStats();
+                            
+                            // Check if completed
+                            if (count >= target) {
+                                clearInterval(intervalId);
+                                addRecentActivity(`Share job #${id} completed`, 'success');
+                            }
+                        }
+                    }, 1000);
+                });
+            
+            } catch (error) {
+                console.error(error);
+                const container = document.getElementById('processing');
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Error loading active jobs</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function updateAdminStats() {
+            try {
+                const response = await fetch('/total');
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                let totalShares = 0;
+                
+                if (data.length > 0) {
+                    totalShares = data.reduce((sum, job) => sum + job.count, 0);
+                }
+                
+                document.getElementById('total-shares').textContent = totalShares.toString();
+                document.getElementById('active-jobs').textContent = data.length.toString();
+                
+                // Calculate success rate (placeholder - you might want to implement actual tracking)
+                const successRate = data.length > 0 ? 100 - (data.length * 2) : 100;
+                document.getElementById('success-rate').textContent = `${Math.max(80, successRate)}%`;
+            } catch (error) {
+                console.error('Error updating admin stats:', error);
+            }
+        }
+        
+        function addRecentActivity(text, type) {
+            const activityContainer = document.querySelector('.recent-activity');
+            const activityItems = document.querySelectorAll('.activity-item');
+            
+            // Create new activity item
+            const newItem = document.createElement('div');
+            newItem.className = 'activity-item';
+            
+            let iconClass = 'fas fa-info-circle';
+            if (type === 'success') iconClass = 'fas fa-check-circle success';
+            else if (type === 'error') iconClass = 'fas fa-times-circle error';
+            
+            newItem.innerHTML = `
+                <i class="${iconClass}"></i>
+                <span>${text}</span>
+                <span class="activity-time">just now</span>
+            `;
+            
+            // Insert at the top
+            if (activityItems.length > 0) {
+                activityContainer.insertBefore(newItem, activityItems[0].nextSibling);
+            } else {
+                activityContainer.appendChild(newItem);
+            }
+            
+            // Limit to 5 items
+            if (activityItems.length >= 5) {
+                activityItems[activityItems.length - 1].remove();
+            }
+            
+            // Update timestamps
+            updateActivityTimestamps();
+        }
+        
+        function updateActivityTimestamps() {
+            const timeElements = document.querySelectorAll('.activity-time');
+            timeElements.forEach((el, index) => {
+                if (index === 0) el.textContent = 'just now';
+                else if (index === 1) el.textContent = '1 min ago';
+                else el.textContent = `${index} mins ago`;
+            });
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            linkOfProcessing();
+            updateAdminStats();
+            
+            // Add some sample recent activities
+            addRecentActivity('System initialized', 'info');
+            addRecentActivity('Welcome back, Bryson', 'success');
+            
+            // Refresh data every 30 seconds
+            setInterval(() => {
+                linkOfProcessing();
+                updateAdminStats();
+            }, 30000);
+            
+            // Update timestamps every minute
+            setInterval(updateActivityTimestamps, 60000);
+        });
+    </script>
+</body>
+</html>
